@@ -1,9 +1,9 @@
 #!/bin/sh
 
-# SSHPlus Standalone Gateway Installer
-# Cleans out all proprietary branding and converts tunnel into a system-wide gateway.
+# SSHPlus Standalone Gateway Installer (OpenWrt 22.03.3 Patched)
+# Swaps tun2socks for badvpn-tun2socks and updates interface routing rules.
 
-echo ">>> Starting Standalone SSHPlus Installation..."
+echo ">>> Starting Standalone SSHPlus Installation for OpenWrt 22.03..."
 
 # Create clean config file if it doesn't exist
 echo "Creating configuration file..."
@@ -28,8 +28,9 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "Installing necessary network packages (tun2socks, openssh, sshpass)..."
-opkg install curl openssh-client openssh-client-utils sshpass procps-ng-pkill procps-ng-pgrep tun2socks ip-full
+# Replaced tun2socks with badvpn-tun2socks for v22.03 compatibility
+echo "Installing necessary network packages (badvpn, openssh, sshpass)..."
+opkg install curl openssh-client openssh-client-utils sshpass procps-ng-pkill procps-ng-pgrep badvpn ip-full kmod-tun
 if [ $? -ne 0 ]; then
     echo "ERROR: Failed to install standalone gateway dependencies."
     exit 1
@@ -38,7 +39,7 @@ fi
 echo "Creating clean LuCI interface files..."
 mkdir -p /usr/lib/lua/luci/controller /usr/lib/lua/luci/model/cbi /usr/lib/lua/luci/view
 
-# Create Core LuCI Controller (Stripped of all old branding frameworks)
+# Create Core LuCI Controller
 cat > /usr/lib/lua/luci/controller/sshplus.lua <<'EoL'
 module("luci.controller.sshplus", package.seeall)
 function index()
@@ -101,7 +102,7 @@ local keyfile = s_profiles:option(Value, "key_file", "Private Key System Path");
 return m
 EoL
 
-# Create Core LuCI View (Clean layout mapping directly under standard Services)
+# Create Core LuCI View
 cat > /usr/lib/lua/luci/view/sshplus_status_section.htm <<'EoL'
 <style>
 .sshplus-main-container{width:100%;margin:10px auto;background:rgba(0,0,0,0.05);border:1px solid rgba(0,0,0,0.1);border-radius:6px;padding:20px}
@@ -165,14 +166,17 @@ start_service() {
 stop_service() {
 	pkill -f "/usr/bin/sshplus_service"
 	pkill -f "sshpass.*-D 127.0.0.1:8089"
-	pkill -f "tun2socks"
+	pkill -f "badvpn-tun2socks"
 	
-	# Clean global IP route components completely on stop execution
+	# Clean routing architecture completely
 	ip route del default dev tun0 table 200 2>/dev/null
 	ip rule del fwmark 1 table 200 2>/dev/null
-	iptables -t mangle -D PREROUTING -i br-lan -j SSHPLUS_MARK 2>/dev/null
-	iptables -t mangle -F SSHPLUS_MARK 2>/dev/null
-	iptables -t mangle -X SSHPLUS_MARK 2>/dev/null
+	
+	# Scrape out iptables rules using standard matching filters
+	iptables -t mangle -D PREROUTING -p tcp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1 2>/dev/null
+	iptables -t mangle -D PREROUTING -p udp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1 2>/dev/null
+	
+	ip link set dev tun0 down 2>/dev/null
 	ip link del tun0 2>/dev/null
 	rm -f /tmp/sshplus_start_time
 }
@@ -200,7 +204,6 @@ while true; do
 	PASS=$(uci get sshplus.$ACTIVE_PROFILE.pass 2>/dev/null)
 	KEY_FILE=$(uci get sshplus.$ACTIVE_PROFILE.key_file 2>/dev/null)
 	
-	# Resolve destination IP manually to avoid routing loop blackholes
 	SERVER_IP=$(nslookup "$HOST" 8.8.8.8 | awk '/Address/ {print $3}' | tail -n1)
 	[ -z "$SERVER_IP" ] && SERVER_IP=$HOST
 
@@ -217,45 +220,44 @@ while true; do
 	
 	sleep 4
 	
-	# Instantiate Virtual layer 3 tunnel device interface
-	echo "Building layer 3 tunnel virtual environment..."
+	# Instantiate Virtual Layer 3 TUN Device Interface
+	echo "Building layer 3 tunnel virtual interface..."
 	ip tuntap add dev tun0 mode tun 2>/dev/null
 	ip link set dev tun0 up
 	ip address add 10.0.0.1/24 dev tun0
 	
-	# Launch tun2socks engine wrapper to bridge IP layer into SOCKS5 structural loop
-	tun2socks -device tun0 -proxy socks5://127.0.0.1:8089 &
+	# Launch badvpn-tun2socks using 22.03 core binary definitions
+	badvpn-tun2socks --tundev tun0 --netif-ipaddr 10.0.0.2 --netif-netmask 255.255.255.0 --socks-server-addr 127.0.0.1:8089 &
 	sleep 2
 	
-	# Build routing rules: Avoid proxying the SSH server itself (creates loop freeze)
-	echo "Injecting clean routing rules engines..."
-	ip route add "$SERVER_IP" via $(ip route show | awk '/default/ {print $3}') 2>/dev/null
+	# Prevent tunnel loop-back loops by passing the VPS directly out the default interface
+	WAN_GATEWAY=$(ip route show | awk '/default/ {print $3}')
+	ip route add "$SERVER_IP" via "$WAN_GATEWAY" 2>/dev/null
 	
-	# Map custom secondary default route tables through the tunnel
+	# Map routing tables through tun0 using a policy route table
 	ip route add default dev tun0 table 200 2>/dev/null
 	ip rule add fwmark 1 table 200 2>/dev/null
 	
-	# Use Firewall mangle markers to throw LAN traffic down the newly created tun0 gateway
-	iptables -t mangle -N SSHPLUS_MARK 2>/dev/null
-	iptables -t mangle -F SSHPLUS_MARK
-	iptables -t mangle -A SSHPLUS_MARK -d 192.168.0.0/16 -j RETURN
-	iptables -t mangle -A SSHPLUS_MARK -d 10.0.0.0/8 -j RETURN
-	iptables -t mangle -A SSHPLUS_MARK -j MARK --set-mark 1
-	iptables -t mangle -A PREROUTING -i br-lan -j SSHPLUS_MARK
+	# Set up broad mangle-marking hooks that are independent of your router interface strings
+	iptables -t mangle -A PREROUTING -p tcp -d 192.168.0.0/16 -j RETURN
+	iptables -t mangle -A PREROUTING -p tcp -d 10.0.0.0/8 -j RETURN
+	iptables -t mangle -A PREROUTING -p tcp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1
+	iptables -t mangle -A PREROUTING -p udp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1
 	
 	echo "System-wide network gateway routing rules applied successfully."
 	
-	# Keep service foreground check loop alive to handle reconnection states safely
+	# Keep service foreground check loop alive
 	while pgrep -f "ssh.*127.0.0.1:8089" >/dev/null; do
 		sleep 10
 	done
 	
 	echo "Outbound structural link drop encountered. Dropping gateway engine tables..."
-	# Clean up routing before trying to reconnect or loop back around
-	iptables -t mangle -D PREROUTING -i br-lan -j SSHPLUS_MARK 2>/dev/null
+	iptables -t mangle -D PREROUTING -p tcp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1 2>/dev/null
+	iptables -t mangle -D PREROUTING -p udp -m comment --comment "sshplus-gateway" -j MARK --set-mark 1 2>/dev/null
 	ip rule del fwmark 1 table 200 2>/dev/null
 	ip route del default dev tun0 table 200 2>/dev/null
-	pkill -f "tun2socks"
+	pkill -f "badvpn-tun2socks"
+	ip link set dev tun0 down 2>/dev/null
 	ip link del tun0 2>/dev/null
 	rm -f /tmp/sshplus_start_time
 	sleep 5
@@ -263,11 +265,11 @@ done
 EoL
 chmod +x /usr/bin/sshplus_service
 
-# Clear the index cache entirely to drop old custom branding tabs
+# Clear index caches to instantly present the clean UI layout tab
 rm -rf /tmp/luci-indexcache
 
 echo "Enabling and starting service daemon..."
 /etc/init.d/sshplus enable
 /etc/init.d/sshplus restart
 
-echo ">>> Installation complete. SSHPlus is now running as a standalone system gateway."
+echo ">>> Installation complete. SSHPlus is running via badvpn-tun2socks system gateway."
