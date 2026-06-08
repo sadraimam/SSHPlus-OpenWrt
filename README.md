@@ -1,5 +1,6 @@
 # SSHPlus-OpenWrt
-SSH Tunnel setup on OpenWrt
+SSH Tunnel setup on OpenWrt v22.03.3
+Target device: Xiaomi Mi Router 4A Gigabit Edition
 
 ## Installation
 ### Run from ssh
