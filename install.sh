@@ -315,7 +315,7 @@ echo "Resolved target remote IP: $SERVER_IP"
 
 date +%s > /tmp/sshplus_start_time
 echo "Firing SSH local tunnel forwarder (-D 127.0.0.1:8089)..."
-SSH_CMD="-v -T -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ExitOnForwardFailure=yes -D 127.0.0.1:8089 -N -p $PORT $USER@$HOST"
+SSH_CMD="-T -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ExitOnForwardFailure=yes -D 127.0.0.1:8089 -N -p $PORT $USER@$HOST"
 
 if [ "$AUTH" = "key" ]; then
 	ssh -i "$KEY" $SSH_CMD &
