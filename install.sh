@@ -326,8 +326,11 @@ fi
 sleep 4
 
 echo "Building layer-3 transparent redsocks redirector..."
+# Stop any lingering system redsocks instance
+/etc/init.d/redsocks stop 2>/dev/null
+
 cat > /var/etc/redsocks_sshplus.conf <<EOF
-base { log_debug = off; log_info = off; log = "file:/tmp/redsocks.log"; daemon = on; redirector = iptables; }
+base { log_debug = off; log_info = off; log = "file:/tmp/redsocks.log"; daemon = on; }
 redsocks { local_ip = 127.0.0.1; local_port = 12345; ip = 127.0.0.1; port = 8089; type = socks5; }
 EOF
 
@@ -341,16 +344,16 @@ cat > /tmp/sshplus_firewall.sh <<EOF
 /usr/sbin/nft -f - <<'NFT'
 table inet fw4 {
     chain dstnat_sshplus {
-        # Fixed: Redirect actions MUST live in a 'nat' table hook
         type nat hook prerouting priority dstnat; policy accept;
         
         # Bypass local subnets
         ip daddr { 127.0.0.0/8, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12 } return
         
-        # Bypass the VPS itself to prevent blackholing
+        # Bypass the VPS itself
         ip daddr $SERVER_IP return
         
-        # Redirect all other TCP traffic to local redsocks
+        # Use meta l4proto for strict nft compliance
+        meta l4proto { tcp, udp } dport 53 redirect to :53
         meta l4proto tcp redirect to :12345
     }
 }
