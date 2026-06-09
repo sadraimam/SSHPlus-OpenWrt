@@ -14,10 +14,10 @@ cat >/etc/init.d/ssh-socks <<'EOF'
 START=90
 STOP=10
 
-HOST="136.244.67.223"
-USER="sadra"
-PASS="sadra"
-PORT="8089"
+HOST=""
+USER=""
+PASS=""
+PORT=""
 
 start() {
     echo "Starting SSH SOCKS tunnel..."
